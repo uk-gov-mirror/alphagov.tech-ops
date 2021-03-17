@@ -1,0 +1,87 @@
+resource "aws_iam_role" "concourse_secrets_admin" {
+  name = "${var.deployment}-${var.concourse_team_name}-concourse-secrets-admin"
+
+  assume_role_policy = <<-EOF
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "Federated": "${module.concourse_base.aws_iam_openid_connect_provider_arn}"
+        },
+        "Action": "sts:AssumeRoleWithWebIdentity",
+        "Condition": {
+          "StringEquals": {
+            "${var.oidc_host_path}:aud": "${var.github_oauth_client_id}",
+            "aws:RequestTag/t${var.trusted_github_team_id}": "t"      // instantiated in team.tf files in tech-ops-private
+          }                                                          // and we need to supply github team id as a discrete no.
+        }                                                           // change name to team_name
+      },                                                            // VPN cidr's (IP restrictions)
+      {
+        "Sid": "AllowPassSessionTagsAndTransitive",
+        "Effect": "Allow",
+        "Action": "sts:TagSession",
+        "Principal": {
+          "Federated": "${module.concourse_base.aws_iam_openid_connect_provider_arn}"
+        }
+      }
+    ]
+  }
+EOF
+}
+
+resource "aws_iam_role_policy" "concourse_secrets_admin" {
+  name = "${var.deployment}-${var.concourse_team_name}-concourse-secrets-admin-policy"
+  role = aws_iam_role.concourse_secrets_admin.id
+
+  policy = <<-POLICY
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Action": [
+          "ssm:GetParameter",
+          "ssm:GetParameters",
+          "ssm:GetParametersByPath"
+        ],
+        "Effect": "Allow",
+        "Resource": [
+          "arn:aws:ssm:eu-west-2:${data.aws_caller_identity.account.account_id}:parameter/${var.deployment}/concourse/worker/${var.concourse_team_name}/*"
+        ]
+      }, {
+        "Action": [
+          "ssm:GetParameter",
+          "ssm:GetParameterHistory",
+          "ssm:GetParameters",
+          "ssm:GetParametersByPath",
+          "ssm:DeleteParameter",
+          "ssm:PutParameter"
+        ],
+        "Effect": "Allow",
+        "Resource": [
+          "arn:aws:ssm:eu-west-2:${data.aws_caller_identity.account.account_id}:parameter/${var.deployment}/concourse/pipelines/${var.concourse_team_name}/*"
+        ]
+      }, {
+        "Action": [
+          "ssm:DeleteParameter",
+          "ssm:PutParameter"
+        ],
+        "Effect": "Deny",
+        "Resource": [
+          "arn:aws:ssm:eu-west-2:${data.aws_caller_identity.account.account_id}:parameter/${var.deployment}/concourse/pipelines/${var.concourse_team_name}/readonly_*"
+        ]
+      }, {
+        "Effect": "Allow",
+        "Action": [
+          "kms:ListKeys",
+          "kms:ListAliases",
+          "kms:Describe*",
+          "kms:Decrypt"
+        ],
+        "Resource": "${var.kms_key_arn}"
+      }
+    ]
+  }
+POLICY
+}
